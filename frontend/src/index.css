@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom scrollbar for the chat window */
+.chat-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Prose overrides for react-markdown inside message bubbles */
+.prose-chat p { margin: 0 0 0.5rem; }
+.prose-chat p:last-child { margin-bottom: 0; }
+.prose-chat ul, .prose-chat ol { margin: 0.5rem 0; padding-left: 1.25rem; }
+.prose-chat li { margin: 0.125rem 0; }
+.prose-chat code {
+  background: rgba(0,0,0,0.08);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.875em;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.prose-chat pre {
+  background: rgba(0,0,0,0.08);
+  border-radius: 6px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.prose-chat pre code { background: transparent; padding: 0; }

@@ -9,7 +9,7 @@ A conversational AI assistant that lets users search for flights, book tickets, 
 | Resource | URL |
 |---|---|
 | Source Code | [github.com/this-Demir/airline-mcp-agent](https://github.com/this-Demir/airline-mcp-agent) |
-| Demo Video | [Add your video link here](https://YOUR_VIDEO_LINK_HERE) |
+| Demo Video | https://drive.google.com/file/d/1sMG2qs4Ju6MZQKnE87__E2Du4GJCcoWF/view?usp=sharing |
 | API Specification | [`docs/airline-api.json`](./docs/airline-api.json) |
 
 ---
@@ -32,31 +32,12 @@ The core architectural guarantee: **flight data, booking confirmations, and seat
 
 ## Architecture
 
-### System Layers
-
-```mermaid
-flowchart TD
-    Browser["Browser\nReact 19 + Vite + TypeScript + TailwindCSS 4"]
-    FastAPI["FastAPI + Uvicorn :8000\nAgentOrchestrator | ConversationMemory | AuthManager"]
-    MCP["MCP Server\nquery_flight | book_flight | check_in"]
-    Ollama["Ollama :11434\nllama3.1:8b"]
-    Gateway[".NET 8 Ocelot Gateway :5000"]
-    DB["MySQL Database"]
-
-    Browser -->|"POST /api/chat (SSE stream)"| FastAPI
-    FastAPI -->|"ollama.chat()"| Ollama
-    Ollama -->|"tool_calls"| FastAPI
-    FastAPI --> MCP
-    MCP -->|"httpx async"| Gateway
-    Gateway --> DB
-    FastAPI -->|"SSE: token | tool_call | tool_result | done"| Browser
-```
 
 ### Request Flow: Flight Search
 
 ```mermaid
 sequenceDiagram
-    participant U as User
+    actor U as User
     participant FE as React Frontend
     participant BE as FastAPI Backend
     participant LLM as Ollama LLM
@@ -75,27 +56,6 @@ sequenceDiagram
     LLM-->>BE: "Here are the available flights..."
     BE-->>FE: SSE {type: token} x N
     Note over FE: Assistant bubble streams word by word
-```
-
-### SSE Event Contract
-
-```mermaid
-flowchart LR
-    subgraph Events emitted by FastAPI
-        A[tool_call\ntool + label]
-        B[tool_result\ntool + data]
-        C[token\ncontent]
-        D[done]
-        E[error\ncontent]
-    end
-
-    subgraph Frontend handling
-        A --> TC[ToolCallIndicator pill]
-        B --> RC[Result Card\nFlightResultCard /\nBookingResultCard /\nCheckInResultCard]
-        C --> BUB[Assistant message bubble\nstreamed word by word]
-        D --> STOP[Mark streaming complete]
-        E --> ERR[Error message in bubble]
-    end
 ```
 
 ---

@@ -57,6 +57,19 @@ export function useChat() {
                 : m
             )
           );
+        } else if (event.type === 'tool_result' && event.data) {
+          setMessages(prev =>
+            prev.map(m => {
+              if (m.id !== assistantId) return m;
+              if (event.tool === 'query_flight')
+                return { ...m, flightResults: event.data };
+              if (event.tool === 'book_flight')
+                return { ...m, bookingResult: event.data };
+              if (event.tool === 'check_in')
+                return { ...m, checkInResult: event.data };
+              return m;
+            })
+          );
         } else if (event.type === 'token' && event.content) {
           setMessages(prev =>
             prev.map(m =>

@@ -8,7 +8,13 @@ import ollama
 from agent.memory import ConversationMemory
 from agent.prompt import get_system_prompt
 from mcp_server.api_client import AirlineAPIClient
-from mcp_server.tools import TOOL_DEFINITIONS, build_tool_registry
+from mcp_server.tools import (
+    TOOL_DEFINITIONS,
+    build_tool_registry,
+    query_flight_impl,
+    book_flight_impl,
+    check_in_impl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +102,7 @@ class AgentOrchestrator:
         model: str,
     ):
         self.memory = memory
+        self.api_client = api_client
         self.tool_registry = build_tool_registry(api_client)
         self.model = model
 
@@ -155,7 +162,38 @@ class AgentOrchestrator:
                     tool_fn = self.tool_registry.get(fn_name)
                     if tool_fn:
                         try:
-                            tool_result = await tool_fn(**fn_args)
+                            if fn_name == "query_flight":
+                                tool_result, structured = await query_flight_impl(
+                                    self.api_client, **fn_args
+                                )
+                                if structured:
+                                    yield json.dumps({
+                                        "type": "tool_result",
+                                        "tool": "query_flight",
+                                        "data": structured,
+                                    })
+                            elif fn_name == "book_flight":
+                                tool_result, structured = await book_flight_impl(
+                                    self.api_client, **fn_args
+                                )
+                                if structured:
+                                    yield json.dumps({
+                                        "type": "tool_result",
+                                        "tool": "book_flight",
+                                        "data": structured,
+                                    })
+                            elif fn_name == "check_in":
+                                tool_result, structured = await check_in_impl(
+                                    self.api_client, **fn_args
+                                )
+                                if structured:
+                                    yield json.dumps({
+                                        "type": "tool_result",
+                                        "tool": "check_in",
+                                        "data": structured,
+                                    })
+                            else:
+                                tool_result = await tool_fn(**fn_args)
                         except TypeError as exc:
                             logger.error(
                                 "[ORCH] tool '%s' called with bad args %s — TypeError: %s",

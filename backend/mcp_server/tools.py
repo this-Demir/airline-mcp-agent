@@ -43,40 +43,42 @@ def _format_flight_list(flights: list[dict]) -> str:
 
 # ── Tool 1: Query Flight ───────────────────────────────────────────────────────
 
-async def query_flight(
+async def query_flight_impl(
     api_client: AirlineAPIClient,
     origin: str,
     destination: str,
     departure_date: str,
     number_of_people: int = 1,
     is_round_trip: bool = False,
-) -> str:
-    """Search for available flights between two airports on a given date."""
+) -> tuple[str, list[dict]]:
+    """Core implementation. Returns (llm_text, structured_flight_list).
+
+    The structured list is forwarded to the frontend via a tool_result SSE event
+    so the UI can render a flight card independently of the LLM response text.
+    """
     logger.info(
         "[TOOL] query_flight called | origin=%r destination=%r departure_date=%r "
         "number_of_people=%s is_round_trip=%s",
         origin, destination, departure_date, number_of_people, is_round_trip,
     )
 
-    # Resolve IATA codes (LLM might pass city names despite instructions)
     try:
         origin_code = resolve_iata(origin)
         destination_code = resolve_iata(destination)
     except ValueError as exc:
         logger.warning("[TOOL] query_flight → IATA resolution failed: %s", exc)
-        return str(exc)
+        return str(exc), []
 
     logger.info(
         "[TOOL] query_flight → IATA resolved: %r→%s, %r→%s",
         origin, origin_code, destination, destination_code,
     )
 
-    # Validate date format
     try:
         parsed_date = datetime.strptime(departure_date, "%Y-%m-%d")
     except ValueError:
         logger.warning("[TOOL] query_flight → invalid date format: %r", departure_date)
-        return f"Invalid date format '{departure_date}'. Please use yyyy-MM-dd (e.g., 2026-06-15)."
+        return f"Invalid date format '{departure_date}'. Please use yyyy-MM-dd (e.g., 2026-06-15).", []
 
     from datetime import timedelta
     date_to = (parsed_date + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -96,7 +98,7 @@ async def query_flight(
     if result.get("error"):
         msg = result['message']
         logger.warning("[TOOL] query_flight → API returned error: %s", msg)
-        return f"Flight search failed: {msg}"
+        return f"Flight search failed: {msg}", []
 
     outbound = result.get("outbound", {})
     flights = outbound.get("items", [])
@@ -113,7 +115,7 @@ async def query_flight(
             f"on {departure_date} for {number_of_people} passenger(s)."
         )
         logger.info("[TOOL] query_flight → %s", no_result_msg)
-        return no_result_msg
+        return no_result_msg, []
 
     flight_list = _format_flight_list(flights)
     header = (
@@ -122,19 +124,47 @@ async def query_flight(
     )
     final = header + flight_list
     logger.info("[TOOL] query_flight → returning to LLM:\n%s", final)
-    return final
+
+    structured = [
+        {
+            "flightNumber": f.get("flightNumber"),
+            "origin": origin_code,
+            "destination": destination_code,
+            "departureDate": f.get("departureDate", "")[:16].replace("T", " "),
+            "arrivalDate": f.get("arrivalDate", "")[:16].replace("T", " "),
+            "durationMinutes": f.get("durationMinutes"),
+            "availableSeats": f.get("availableCapacity"),
+        }
+        for f in flights
+    ]
+
+    return final, structured
+
+
+async def query_flight(
+    api_client: AirlineAPIClient,
+    origin: str,
+    destination: str,
+    departure_date: str,
+    number_of_people: int = 1,
+    is_round_trip: bool = False,
+) -> str:
+    """Search for available flights between two airports on a given date."""
+    text, _ = await query_flight_impl(
+        api_client, origin, destination, departure_date, number_of_people, is_round_trip
+    )
+    return text
 
 
 # ── Tool 2: Book Flight ────────────────────────────────────────────────────────
 
-async def book_flight(
+async def book_flight_impl(
     api_client: AirlineAPIClient,
     flight_number: str,
     flight_date: str,
     passenger_names: list[str] | str,
-) -> str:
-    """Purchase tickets for a specific flight."""
-    # LLM sometimes serializes the array as a JSON string — parse it back
+) -> tuple[str, dict | None]:
+    """Core implementation. Returns (llm_text, structured_result | None)."""
     if isinstance(passenger_names, str):
         import json as _json
         try:
@@ -143,12 +173,13 @@ async def book_flight(
             passenger_names = [passenger_names]
 
     if not passenger_names:
-        return "At least one passenger name is required to book a flight."
+        return "At least one passenger name is required to book a flight.", None
 
     flight_date_normalized = normalize_flight_date(flight_date)
+    fn_upper = flight_number.strip().upper()
 
     payload = {
-        "flightNumber": flight_number.strip().upper(),
+        "flightNumber": fn_upper,
         "flightDate": flight_date_normalized,
         "passengerNames": [name.strip() for name in passenger_names],
     }
@@ -156,40 +187,70 @@ async def book_flight(
     result = await api_client.purchase_ticket(payload)
 
     if result.get("error"):
-        return f"Booking failed: {result['message']}"
+        return f"Booking failed: {result['message']}", None
 
     status = result.get("status", "")
     pnr = result.get("pnrCode", "")
+    names_str = ", ".join(passenger_names)
+    date_only = flight_date[:10]
 
     if status == "Confirmed":
-        names_str = ", ".join(passenger_names)
-        return (
+        text = (
             f"Booking confirmed! PNR Code: {pnr}. "
-            f"Flight {flight_number.upper()} on {flight_date} "
+            f"Flight {fn_upper} on {date_only} "
             f"for passenger(s): {names_str}. "
             f"Please keep your PNR code for check-in."
         )
+        data = {
+            "status": "Confirmed",
+            "pnrCode": pnr,
+            "flightNumber": fn_upper,
+            "flightDate": date_only,
+            "passengerNames": list(passenger_names),
+        }
+        return text, data
+
     elif status == "SoldOut":
-        return (
-            f"Sorry, flight {flight_number.upper()} on {flight_date} is sold out. "
+        text = (
+            f"Sorry, flight {fn_upper} on {date_only} is sold out. "
             "Would you like me to search for alternative flights?"
         )
-    else:
-        return f"Booking returned unexpected status: {status}. PNR: {pnr}"
+        data = {
+            "status": "SoldOut",
+            "flightNumber": fn_upper,
+            "flightDate": date_only,
+        }
+        return text, data
+
+    return f"Booking returned unexpected status: {status}. PNR: {pnr}", None
+
+
+async def book_flight(
+    api_client: AirlineAPIClient,
+    flight_number: str,
+    flight_date: str,
+    passenger_names: list[str] | str,
+) -> str:
+    """Purchase tickets for a specific flight."""
+    text, _ = await book_flight_impl(api_client, flight_number, flight_date, passenger_names)
+    return text
 
 
 # ── Tool 3: Check-In ──────────────────────────────────────────────────────────
 
-async def check_in(
+async def check_in_impl(
     api_client: AirlineAPIClient,
     pnr_code: str,
     passenger_name: str,
-) -> str:
-    """Check in a passenger using their PNR booking code."""
+) -> tuple[str, dict | None]:
+    """Core implementation. Returns (llm_text, structured_result | None)."""
     pnr_code = pnr_code.strip().upper()
 
     if len(pnr_code) != 6 or not pnr_code.isalnum():
-        return f"Invalid PNR code '{pnr_code}'. A PNR code must be exactly 6 alphanumeric characters."
+        return (
+            f"Invalid PNR code '{pnr_code}'. A PNR code must be exactly 6 alphanumeric characters.",
+            None,
+        )
 
     payload = {
         "pnrCode": pnr_code,
@@ -204,13 +265,36 @@ async def check_in(
     full_name = result.get("fullName", passenger_name)
 
     if status == "Success":
-        return (
+        text = (
             f"Check-in successful! Passenger: {full_name}, "
             f"Seat Number: {seat_number}. Have a great flight!"
         )
+        data = {
+            "status": "Success",
+            "pnrCode": pnr_code,
+            "fullName": full_name,
+            "seatNumber": str(seat_number) if seat_number else None,
+        }
     else:
-        # status == "Failed" — pass through the API's message
-        return f"Check-in failed: {message or 'No ticket found for this PNR code and passenger name.'}"
+        text = f"Check-in failed: {message or 'No ticket found for this PNR code and passenger name.'}"
+        data = {
+            "status": "Failed",
+            "pnrCode": pnr_code,
+            "fullName": full_name or passenger_name,
+            "message": message or "No ticket found for this PNR code and passenger name.",
+        }
+
+    return text, data
+
+
+async def check_in(
+    api_client: AirlineAPIClient,
+    pnr_code: str,
+    passenger_name: str,
+) -> str:
+    """Check in a passenger using their PNR booking code."""
+    text, _ = await check_in_impl(api_client, pnr_code, passenger_name)
+    return text
 
 
 # ── Tool Registry ─────────────────────────────────────────────────────────────

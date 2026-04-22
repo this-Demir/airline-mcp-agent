@@ -4,16 +4,6 @@ A conversational AI assistant that lets users search for flights, book tickets, 
 
 ---
 
-## Links
-
-| Resource | URL |
-|---|---|
-| Source Code | [github.com/this-Demir/airline-mcp-agent](https://github.com/this-Demir/airline-mcp-agent) |
-| Demo Video | https://drive.google.com/file/d/1sMG2qs4Ju6MZQKnE87__E2Du4GJCcoWF/view?usp=sharing |
-| API Specification | [`docs/airline-api.json`](./docs/airline-api.json) |
-
----
-
 ## Screenshots
 
 | Flight Search | Booking Confirmed | Check-In |
